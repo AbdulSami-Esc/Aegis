@@ -1,24 +1,47 @@
-import time
 import logging
-from pipecat import FrameProcessor, FrameDirection
+import time
+
+from pipecat.frames.frames import AudioRawFrame
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 logger = logging.getLogger(__name__)
 
+
 class FrameLogger(FrameProcessor):
-    ##direction parameter would tell whether this is moving from mic to AI or AI to mic
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._last_audio_time = None
+        self._audio_count = 0
+        self._max_gap_ms = 0.0
+        self._window_start = time.perf_counter()
+
     async def process_frame(self, frame, direction: FrameDirection):
-        ##First safety check before a frame is checked
         await super().process_frame(frame, direction)
-        
-        current_time = time.perf_counter()
+
+        now = time.perf_counter()
         frame_type = type(frame).__name__
 
-        ##Checking if the frame object contains audio material
-        if hasattr(frame, "audio"):
-            ##Count the exact number of butes in the audio payload
-            audio_length = len(frame.audio)
-            logger.info(f"[{current_time:.3f}] {direction.name}: {frame_type} | Size: {audio_length} bytes")
+        if isinstance(frame, AudioRawFrame):
+            gap_ms = 0.0
+            if self._last_audio_time is not None:
+                gap_ms = (now - self._last_audio_time) * 1000
+            self._last_audio_time = now
+            self._audio_count += 1
+            self._max_gap_ms = max(self._max_gap_ms, gap_ms)
+
+            logger.debug(
+                f"{direction.name}: {frame_type} | {len(frame.audio)} bytes | gap {gap_ms:.1f} ms"
+            )
+
+            # One summary line per second instead of 50 lines
+            if now - self._window_start >= 1.0:
+                logger.info(
+                    f"audio frames/s: {self._audio_count} | worst gap: {self._max_gap_ms:.1f} ms"
+                )
+                self._audio_count = 0
+                self._max_gap_ms = 0.0
+                self._window_start = now
         else:
-            logger.info(f"[{current_time:.3f}] {direction.name}: {frame_type}")
-        ##Hands the frame off to the next processor in the pipeline  
+            logger.info(f"{direction.name}: {frame_type}")
+
         await self.push_frame(frame, direction)
