@@ -1,10 +1,95 @@
-# TODO: import SileroVADAnalyzer, VADParams, DeepgramSTTService,
-#       LLMContext, LLMContextAggregatorPair, LLMUserAggregatorParams
-#       (paths are in the speech-input and Deepgram docs pages)
+import logging
 
-# Inside run_call, before building the pipeline:
-# TODO: vad = Silero VAD with sample_rate from settings (what must it be?)
-# TODO: stt = Deepgram service, key from settings, interim_results on
-# TODO: build the context and the aggregator pair with vad in the user params
-# TODO: new order: transport.input() -> stt -> user aggregator -> SpeechLogger -> FrameLogger -> transport.output()
-# TODO: confirm the order against the docs (where must STT sit relative to VAD?)
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineTask
+from pipecat.processors.aggregators.llm_context import LLMContext  # verify with Step 1 below
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMUserAggregatorParams,
+    LLMContextAggregatorPair,
+)
+from pipecat.serializers.protobuf import ProtobufFrameSerializer
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
+
+from app.config import get_settings
+from app.processors.frame_logger import FrameLogger
+from app.processors.speech_logger import SpeechLogger
+
+logger = logging.getLogger(__name__)
+
+
+async def run_call(websocket):
+    settings = get_settings()
+
+    # Build the VAD Analyzer
+    # Silero requires the sample rate to be exactly 8000 or 16000.
+    vad_analyzer = SileroVADAnalyzer(
+        sample_rate=settings.sample_rate,
+        params=VADParams(min_volume=0.4,confidence=0.5 ),
+    )
+
+    # Build the Deepgram STT Service
+    stt = DeepgramSTTService(
+        api_key=settings.deepgram_api_key,
+        settings=DeepgramSTTService.Settings(interim_results=True),
+    )
+
+    # Build the Context and Aggregator Pair
+    context = LLMContext()
+
+    user_aggregator_params = LLMUserAggregatorParams(
+        vad_analyzer=vad_analyzer
+    )
+
+    aggregator_pair = LLMContextAggregatorPair(
+        context,
+        user_params=user_aggregator_params,
+    )
+
+    # Transport (same as Phase 1)
+    params = FastAPIWebsocketParams(
+        audio_in_enabled=True,
+        audio_out_enabled=True,
+        add_wav_header=False,
+        serializer=ProtobufFrameSerializer(),
+    )
+    transport = FastAPIWebsocketTransport(websocket=websocket, params=params)
+
+    # New Pipeline Order
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,                      # Live Translator
+            SpeechLogger(),           # Latency stopwatch (sees text and the VAD frames)
+            aggregator_pair.user(),   # Turn Manager / Context Builder
+            FrameLogger(),            # Frame inspector
+            transport.output(),
+        ]
+    )
+
+    task = PipelineTask(pipeline)
+    runner = PipelineRunner(handle_sigint=False)
+
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, client):
+        logger.info("Client connected.")
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(transport, client):
+        logger.info("Client hung up. Cancelling the task.")
+        await task.cancel()
+
+    try:
+        logger.info("Starting pipeline.")
+        await runner.run(task)
+    except Exception:
+        logger.exception("Pipeline crashed.")
+        raise
+    finally:
+        logger.info("Call cleanup finished.")
