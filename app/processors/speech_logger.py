@@ -21,6 +21,7 @@ class SpeechLogger(FrameProcessor):
 
         # Did the microphone operator hear a voice?
         if isinstance(frame, VADUserStartedSpeakingFrame):
+            self.stop_time=None
             logger.info("🎙️ User started speaking...")
 
         # Did the microphone operator hear silence?
@@ -42,8 +43,6 @@ class SpeechLogger(FrameProcessor):
 
                 logger.info(f"✅ Final text: '{frame.text}' (Latency: {latency_ms:.0f} ms)")
 
-                # Reset the stopwatch for the next sentence
-                self.stop_time = None
             else:
                 # Just in case we get text without a VAD stop frame
                 logger.info(f"✅ Final text: '{frame.text}'")

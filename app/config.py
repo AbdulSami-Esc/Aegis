@@ -1,3 +1,6 @@
+##Defines evry setting in one file
+##Sets all values for sample rate,log level,port and chunk size
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict

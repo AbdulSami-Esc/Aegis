@@ -11,12 +11,13 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 CHUNK_MS = 20
 CHUNK_FRAMES = SAMPLE_RATE * CHUNK_MS // 1000  # 320 samples = 640 bytes
-
+##Records laptop microphone in 20ms chunks
 
 async def main():
     serializer = ProtobufFrameSerializer()
     loop = asyncio.get_running_loop()
     mic_queue = asyncio.Queue(maxsize=50)
+    ready=asyncio.Event()
 
     def enqueue(data: bytes):
         try:
@@ -31,10 +32,16 @@ async def main():
         loop.call_soon_threadsafe(enqueue, bytes(indata))
 
     async def send_mic(ws):
+        print("Waiting for the server to be ready... (don't speak yet)")
+        try:
+            await asyncio.wait_for(ready.wait(), timeout=20)
+        except asyncio.TimeoutError:
+            print("No ready signal in 20 s, streaming anyway.")
+        while not mic_queue.empty():
+            mic_queue.get_nowait()  # discard stale audio recorded while waiting
+        print("Ready. Speak now.")
         while True:
             chunk = await mic_queue.get()
-            # The server treats this as input audio, but the serializer expects
-            # the client to send it as an OutputAudioRawFrame
             frame = OutputAudioRawFrame(
                 audio=chunk, sample_rate=SAMPLE_RATE, num_channels=CHANNELS
             )
@@ -43,6 +50,7 @@ async def main():
     async def receive(ws):
         speaker = None
         async for message in ws:
+            ready.set()
             frame = await serializer.deserialize(message)
             if frame is None:
                 continue

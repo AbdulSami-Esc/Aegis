@@ -1,5 +1,6 @@
 import logging
-
+##It accepts connection then hands the caller to run_call
+##It catches hang ups and unexpected errors
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from app import pipeline as pipeline_module

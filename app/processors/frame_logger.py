@@ -5,11 +5,13 @@ from pipecat.frames.frames import AudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 logger = logging.getLogger(__name__)
-
+##Counts the audio pieces and measures the time between them
+##It notes whnether the audio samples come evenly or in clumps and prints a summary once a second
 
 class FrameLogger(FrameProcessor):
-    def __init__(self, **kwargs):
+    def __init__(self,label="", **kwargs):
         super().__init__(**kwargs)
+        self._label=label
         self._last_audio_time = None
         self._audio_count = 0
         self._max_gap_ms = 0.0
@@ -42,6 +44,6 @@ class FrameLogger(FrameProcessor):
                 self._max_gap_ms = 0.0
                 self._window_start = now
         else:
-            logger.info(f"{direction.name}: {frame_type}")
+            logger.info(f"[{self._label}] audio frames/s: {self._audio_count} | worst gap: {self._max_gap_ms:.1f} ms")
 
         await self.push_frame(frame, direction)

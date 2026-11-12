@@ -20,7 +20,8 @@ from pipecat.transports.websocket.fastapi import (
 from app.config import get_settings
 from app.processors.frame_logger import FrameLogger
 from app.processors.speech_logger import SpeechLogger
-
+##runs once for each caller to ensure data privacy is mantained
+##Builds up eveyrthing from VAD to speech-to-text services an the belt
 logger = logging.getLogger(__name__)
 
 
@@ -65,10 +66,11 @@ async def run_call(websocket):
     pipeline = Pipeline(
         [
             transport.input(),
-            stt,                      # Live Translator
-            SpeechLogger(),           # Latency stopwatch (sees text and the VAD frames)
-            aggregator_pair.user(),   # Turn Manager / Context Builder
-            FrameLogger(),            # Frame inspector
+            FrameLogger(label="before"),
+            stt,
+            SpeechLogger(),
+            aggregator_pair.user(),
+            FrameLogger(label="after"),
             transport.output(),
         ]
     )
